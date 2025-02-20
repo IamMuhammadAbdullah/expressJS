@@ -1,15 +1,20 @@
+const bcrypt = require("bcrypt");
 const path = require("path");
-const admin = require("../config//firebaseConfig");
-const { default: firebase } = require("firebase/compat/app");
+// const admin = require("../config/firebaseConfig");
+const admin = require('firebase-admin');
+const { default: axios } = require("axios");
+
+const API_KEY = 'AIzaSyDPTN85cP-03QcSBRseSEnpV6yEjvOgoq'
 
 exports.register = async (req, res) => {
   const { email, password, firstName, lastName, age } = req.body;
+
   try {
+    const hashedPassword = await bcrypt.hash(password, 10);
     const userDetails = await admin.auth().createUser({
-      email: email,
-      password: password,
+      email,
+      password: hashedPassword,
     });
-    const token = await admin.auth().createCustomToken(userDetails.uid);
 
     const userRef = admin.firestore().collection("users").doc(userDetails.uid);
     await userRef.set({
@@ -17,9 +22,16 @@ exports.register = async (req, res) => {
       firstName: firstName,
       lastName: lastName,
       age: age,
+      password: hashedPassword,
     });
 
-    res.json({ uid: userDetails.uid, token: token, message: "User created" });
+    const token = await admin.auth().createCustomToken(userDetails.uid);
+
+    res.json({
+      uid: userDetails.uid,
+      token: token,
+      message: "User registered",
+    });
   } catch (error) {
     res.json({ error: error.message });
   }
@@ -28,11 +40,45 @@ exports.register = async (req, res) => {
 exports.login = async (req, res) => {
   const { email, password } = req.body;
   try {
-    const userDetail = await firebase
-      .auth()
-      .signInWithEmailAndPassword(email, password);
-    const token = await admin.auth().createCustomToken(userDetail.user.uid);
-    req.send({ uid: userDetail.user.uid, token: token });
+    const userRef = admin
+      .firestore()
+      .collection("users")
+      .where("email", "==", email);
+    const userDoc = await userRef.get();
+
+    if (userDoc.empty) {
+      return res.json({ error: "User not found" });
+    }
+
+    let user;
+    userDoc.forEach((doc) => {
+      user = doc.data();
+      user.uid = doc.id;
+    });
+
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+
+    if (!isPasswordValid) {
+      return res.json({ error: "Invalid password" });
+    }
+
+    const customToken = await admin.auth().createCustomToken(user.uid);
+
+    // CALL AXIOS API
+    const response = await axios.post(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${API_KEY}`, {
+      token: customToken,
+      returnSecureToken: true
+    })
+    // GET TOKEN
+    const idToken = response.data.idToken
+    // PASS THAT TOKEN
+
+
+    res.send({
+      uid: user.uid,
+      token: idToken,
+      message: "Login successful",
+    });
   } catch (error) {
     res.json({ error: error.message });
   }
@@ -47,24 +93,45 @@ exports.renderLoginPage = (req, res) => {
 };
 
 exports.renderProfilePage = async (req, res) => {
-  if (!req.user) {
-    return res.send("User not found");
+  const uid = req.user.uid;
+  console.log(req.user)
+  const userRef = admin.firestore().collection("users").doc(uid);
+  const userDoc = await userRef.get();
+
+  if (!userDoc.exists) {
+    return res.json({ error: "User not found" });
   }
-  res.json({ user: req.user });
+
+  const userData = userDoc.data();
+
+  res.json({
+    uid: req.user.uid,
+    email: userData.email,
+    firstName: userData.firstName,
+    lastName: userData.lastName,
+    age: userData.age,
+  });
 };
 
 exports.authToken = async (req, res, next) => {
-  const token = req.headers.authorization?.split(" ")[1];
-  // console.log(token);
+  console.log(req.headers);
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    return res.json({ error: "Authorization header not found" });
+  }
+
+  const token = authHeader.split(" ")[1];
+  console.log("Token: ", token);
   if (!token) {
     return res.json({ error: "Token not found" });
   }
+
   try {
     const verifyToken = await admin.auth().verifyIdToken(token);
     req.user = verifyToken;
-    console.log("Chala");
+
     next();
   } catch (error) {
-    res.send(error.message);
+    res.send({ error: error.message });
   }
 };
