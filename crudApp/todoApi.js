@@ -7,57 +7,6 @@ const { default: axios } = require("axios");
 
 const API_KEY = "AIzaSyDnUt_8QyJjpgiJzjHf4vLlAyzDVMgWRJM";
 
-// async function authenticate(req, res, next) {
-//   const token = req.headers.authorization?.split('Bearer ')[1];
-
-//   if (!token) {
-//     return res.send('No token found');
-//   }
-
-//   try {
-//     const decodedToken = await admin.auth().verifyIdToken(token);
-//     const uid = decodedToken.uid;
-//     const userRef = admin.firestore().collection("users").doc(uid);
-//     const doc = await userRef.get();
-
-//     if (!doc.exists) {
-//       return res.send("User data not exist");
-//     }
-
-//     req.user = doc.data();
-//     req.user.uid = uid;
-
-//     next();
-
-//   } catch (error) {
-//     res.send(error.message);
-//   }
-// }
-
-// async function authorizeAdmin(req, res, next) {
-//   if (!req.user) {
-//     res.send("No user Found");
-//   }
-
-//   const uid = req.user.uid;
-//   try {
-//     const userRef = admin.firestore().collection("users").doc(uid);
-//     const doc = await userRef.get();
-//     if (!doc.exists) {
-//       res.send("user not found (uid)");
-//     }
-
-//     const user = doc.data();
-//     if (user.role !== "admin") {
-//       return res.send("You are not admin");
-//     }
-
-//     next();
-//   } catch (error) {
-//     res.send(error.message);
-//   }
-// }
-
 async function authorization(req, res, next) {
   const token = req.headers.authorization?.split("Bearer ")[1];
 
