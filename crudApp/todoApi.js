@@ -11,7 +11,7 @@ async function authorization(req, res, next) {
   const token = req.headers.authorization?.split("Bearer ")[1];
 
   if (!token) {
-    return res.status(401).send("No token found");
+    return res.send("No token found");
   }
 
   try {
@@ -21,21 +21,15 @@ async function authorization(req, res, next) {
     const doc = await userRef.get();
 
     if (!doc.exists) {
-      return res.status(404).send("User data does not exist");
+      return res.send("User data does not exist");
     }
 
     const user = doc.data();
-    user.uid = uid; // attach UID to user data
+    user.uid = uid;
     req.user = user;
-
-    // Check user role if the user is found and token is valid
-    if (req.user.role !== "admin") {
-      return res.status(403).send("Access denied. You are not an admin.");
-    }
-
-    next(); // Continue to next middleware or route handler if all checks pass
+    next();
   } catch (error) {
-    res.status(401).send("Authentication failed: " + error.message);
+    res.send("Authentication failed");
   }
 }
 
@@ -51,21 +45,16 @@ router.post("/register", async (req, res) => {
 
     const userRef = admin.firestore().collection("users").doc(userDetails.uid);
     await userRef.set({
-      email: email,
+      email,
       password: hashedPassword,
-      name: name,
-      role: role,
+      name,
+      role,
     });
 
     const token = await admin.auth().createCustomToken(userDetails.uid);
-
-    res.json({
-      uid: userDetails.uid,
-      token: token,
-      message: "User registered",
-    });
+    res.json({ uid: userDetails.uid, token });
   } catch (error) {
-    res.json({ error: error.message });
+    res.send("could not register user");
   }
 });
 
@@ -79,7 +68,7 @@ router.post("/login", async (req, res) => {
     const userDoc = await userRef.get();
 
     if (userDoc.empty) {
-      return res.json({ error: "User not found" });
+      return res.send("User not found");
     }
 
     let user;
@@ -91,68 +80,79 @@ router.post("/login", async (req, res) => {
     const isPasswordValid = await bcrypt.compare(password, user.password);
 
     if (!isPasswordValid) {
-      return res.json({ error: "Invalid password" });
+      return res.send("Invalid password");
     }
 
     const customToken = await admin.auth().createCustomToken(user.uid);
-
-    // CALL AXIOS API
     const response = await axios.post(
       `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${API_KEY}`,
-      {
-        token: customToken,
-        returnSecureToken: true,
-      }
+      { token: customToken, returnSecureToken: true }
     );
-    // GET TOKEN
-    const idToken = response.data.idToken;
-    // PASS THAT TOKEN
 
-    res.send({
-      uid: user.uid,
-      token: idToken,
-      message: "Login successful",
-    });
+    const idToken = response.data.idToken;
+    res.send({ uid: user.uid, token: idToken });
   } catch (error) {
-    res.json({ error: error.message });
+    res.send("could not login user");
   }
 });
 
 router.post("/todos", authorization, async (req, res) => {
   const { todoValue, isCompleted } = req.body;
+  const userId = req.user.uid;
+
   try {
-    const todo = await db.collection("todos").add({ todoValue, isCompleted });
-    res.send(`Todo creation id: ${todo.id}`);
+    const todo = await db
+      .collection("todos")
+      .add({ userId, todoValue, isCompleted });
+    res.send(todo.id);
   } catch (error) {
-    res.send(error.message);
+    res.send("todo creation failed");
   }
 });
 
 router.get("/todos", authorization, async (req, res) => {
   try {
-    const getTodos = await db.collection("todos").get();
-    const todos = [];
+    let todoQuery;
+    if (req.user.role === "admin") {
+      todoQuery = db.collection("todos");
+    } else {
+      todoQuery = db.collection("todos").where("userId", "==", req.user.uid);
+    }
 
+    const getTodos = await todoQuery.get();
+    const todos = [];
     getTodos.forEach((todo) => {
-      todos.push({
-        id: todo.id,
-        ...todo.data(),
-      });
+      todos.push({ id: todo.id, ...todo.data() });
     });
+
     res.json(todos);
   } catch (error) {
-    res.send(error.message);
+    res.send("unable to fetch todos");
   }
 });
 
 router.put("/todos/:id", authorization, async (req, res) => {
   const { id } = req.params;
   const { todoValue, isCompleted } = req.body;
+
   try {
-    await db.collection("todos").doc(id).update({ todoValue, isCompleted });
+    const todoRef = db.collection("todos").doc(id);
+    const todoDoc = await todoRef.get();
+
+    if (!todoDoc.exists) {
+      return res.send("Todo not found");
+    }
+
+    const todoData = todoDoc.data();
+
+    if (req.user.role !== "admin" && todoData.userId !== req.user.uid) {
+      return res.send("Access denied");
+    }
+
+    await todoRef.update({ todoValue, isCompleted });
     res.send("Todo updated");
   } catch (error) {
-    res.send(error.message);
+    res.send("unable to update todo");
   }
 });
 
@@ -160,10 +160,23 @@ router.delete("/todos/:id", authorization, async (req, res) => {
   const { id } = req.params;
 
   try {
-    await db.collection("todos").doc(id).delete();
+    const todoRef = db.collection("todos").doc(id);
+    const todoDoc = await todoRef.get();
+
+    if (!todoDoc.exists) {
+      return res.send("Todo not found");
+    }
+
+    const todoData = todoDoc.data();
+
+    if (req.user.role !== "admin" && todoData.userId !== req.user.uid) {
+      return res.send("Access denied");
+    }
+
+    await todoRef.delete();
     res.send("Todo deleted");
   } catch (error) {
-    res.send(error.message);
+    res.send("unable to delete todo");
   }
 });
 
